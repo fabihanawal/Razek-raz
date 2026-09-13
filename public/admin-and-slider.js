@@ -305,6 +305,13 @@
     if (!portalData || !portalData.slides || !portalData.hotlines) {
       portalData = JSON.parse(JSON.stringify(DEFAULT_PORTAL_CONFIG));
     }
+    if (!portalData.candidate) {
+      portalData.candidate = JSON.parse(JSON.stringify(DEFAULT_PORTAL_CONFIG.candidate));
+    }
+    const savedCustomPhoto = localStorage.getItem('candidate_custom_photo');
+    if (savedCustomPhoto) {
+      portalData.candidate.photo = savedCustomPhoto;
+    }
   }
 
   // Save config to localStorage
@@ -365,6 +372,8 @@
     const csl = document.getElementById('hero-candidate-slogan-text');
     const cq = document.getElementById('hero-candidate-quote');
     const cp = document.getElementById('hero-candidate-phone-link');
+    const ci = document.getElementById('candidate-hero-img');
+    const cm = document.getElementById('candidate-modal-img');
 
     if (cn) cn.textContent = c.name;
     if (ct) ct.textContent = c.title;
@@ -375,6 +384,14 @@
     if (cp) {
       cp.href = `tel:${c.phone || '01712345678'}`;
       cp.innerHTML = `<i class="fa-solid fa-phone-volume"></i><span>সরাসরি প্রার্থীর সাথে কথা বলুন (২৪/৭)</span>`;
+    }
+
+    const currentPhoto = c.photo || localStorage.getItem('candidate_custom_photo') || '/candidate_rajek_rezvi.jpg';
+    if (ci && currentPhoto) {
+      ci.src = currentPhoto;
+    }
+    if (cm && currentPhoto) {
+      cm.src = currentPhoto;
     }
   }
 
@@ -1352,12 +1369,228 @@
   // ----------------------------------------------------
   // ADMIN TAB 2: GENERAL & CANDIDATE PROFILE
   // ----------------------------------------------------
+
+  // Image compression & resizing helper for candidate photo
+  function compressCandidateImage(file, maxWidth, maxHeight, quality, callback) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const img = new Image();
+      img.onload = function() {
+        let w = img.width;
+        let h = img.height;
+        if (w > maxWidth || h > maxHeight) {
+          if (w / h > maxWidth / maxHeight) {
+            h = Math.round((h * maxWidth) / w);
+            w = maxWidth;
+          } else {
+            w = Math.round((w * maxHeight) / h);
+            h = maxHeight;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        callback(null, dataUrl);
+      };
+      img.onerror = function() {
+        callback(new Error('ইমেজ প্রসেস করতে ব্যর্থ হয়েছে'));
+      };
+      img.src = e.target.result;
+    };
+    reader.onerror = function() {
+      callback(new Error('ফাইল পড়তে ব্যর্থ হয়েছে'));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function applyNewCandidatePhoto(photoUrl) {
+    portalData.candidate.photo = photoUrl;
+    try {
+      localStorage.setItem('candidate_custom_photo', photoUrl);
+    } catch (e) {
+      console.warn('LocalStorage candidate_custom_photo quota notice:', e);
+    }
+    saveConfig();
+
+    // Update admin preview and input
+    const preview = document.getElementById('admin-cand-img-preview');
+    const input = document.getElementById('cand-photo-url-input');
+    if (preview) preview.src = photoUrl;
+    if (input) input.value = photoUrl.startsWith('data:') ? '(আপলোডকৃত নতুন ছবি)' : photoUrl;
+
+    // Update main site images
+    const heroImg = document.getElementById('candidate-hero-img');
+    const modalImg = document.getElementById('candidate-modal-img');
+    if (heroImg) heroImg.src = photoUrl;
+    if (modalImg) modalImg.src = photoUrl;
+
+    showToast('প্রার্থীর নতুন ছবি সফলভাবে আপলোড ও প্রকাশ করা হয়েছে!');
+  }
+
+  window.handleAdminCandidatePhotoUpload = function(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('অনুগ্রহ করে শুধুমাত্র ছবি ফাইল (JPG, PNG, WEBP) নির্বাচন করুন।');
+      return;
+    }
+
+    // Compress to max 600px width/height and quality 0.82
+    compressCandidateImage(file, 600, 600, 0.82, function(err, dataUrl) {
+      if (err || !dataUrl) {
+        // Fallback to raw reader if canvas fails
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          applyNewCandidatePhoto(e.target.result);
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+      applyNewCandidatePhoto(dataUrl);
+    });
+  };
+
+  window.applyAdminCandidatePhotoUrl = function() {
+    const input = document.getElementById('cand-photo-url-input');
+    if (!input) return;
+    const url = input.value.trim();
+    if (!url || url === '(আপলোডকৃত নতুন ছবি)') {
+      alert('দয়া করে সঠিক ছবির লিঙ্ক বা ফাইল পাথ প্রদান করুন।');
+      return;
+    }
+
+    applyNewCandidatePhoto(url);
+  };
+
+  window.resetAdminCandidatePhoto = function() {
+    if (!confirm('আপনি কি প্রার্থীর ছবি রিসেট করে ডিফল্ট মূল ছবিতে ফিরিয়ে নিতে চান?')) return;
+    const defaultPhoto = '/candidate_rajek_rezvi.jpg';
+    portalData.candidate.photo = defaultPhoto;
+    try {
+      localStorage.removeItem('candidate_custom_photo');
+    } catch (e) {}
+    saveConfig();
+
+    const preview = document.getElementById('admin-cand-img-preview');
+    const input = document.getElementById('cand-photo-url-input');
+    if (preview) preview.src = defaultPhoto;
+    if (input) input.value = defaultPhoto;
+
+    const heroImg = document.getElementById('candidate-hero-img');
+    const modalImg = document.getElementById('candidate-modal-img');
+    if (heroImg) heroImg.src = defaultPhoto;
+    if (modalImg) modalImg.src = defaultPhoto;
+
+    showToast('প্রার্থীর ছবি সফলভাবে ডিফল্ট ছবিতে ফিরিয়ে নেওয়া হয়েছে।');
+  };
+
   function renderAdminGeneral(container) {
     const g = portalData.general;
     const c = portalData.candidate;
+    const currentPhoto = c.photo || localStorage.getItem('candidate_custom_photo') || '/candidate_rajek_rezvi.jpg';
 
     container.innerHTML = `
       <div class="space-y-6">
+        <!-- Candidate Photo Management Card -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 mb-5 border-b border-slate-100 gap-2">
+            <h4 class="font-extrabold text-slate-900 text-base flex items-center gap-2">
+              <i class="fa-solid fa-camera text-emerald-600"></i>
+              <span>প্রার্থীর ছবি সম্পাদনা ও আপলোড</span>
+            </h4>
+            <span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full w-fit">
+              <i class="fa-solid fa-circle-check text-emerald-500 mr-1"></i>লাইভ ওয়েবসাইটে তাৎক্ষণিক দৃশ্যমান
+            </span>
+          </div>
+
+          <div class="flex flex-col md:flex-row items-center md:items-start gap-6">
+            <!-- Candidate Current Photo Preview Box -->
+            <div class="flex flex-col items-center shrink-0">
+              <div class="relative">
+                <div class="w-36 h-36 sm:w-40 sm:h-40 rounded-2xl bg-gradient-to-tr from-emerald-600 to-gov-darkgreen p-1 shadow-lg shadow-emerald-900/10">
+                  <div class="w-full h-full bg-slate-100 rounded-xl overflow-hidden relative shadow-inner">
+                    <img 
+                      id="admin-cand-img-preview" 
+                      src="${currentPhoto}" 
+                      alt="${c.name}" 
+                      class="w-full h-full object-cover object-top"
+                      onerror="this.onerror=null; this.src='/candidate_rajek_rezvi.jpg';"
+                    />
+                  </div>
+                </div>
+                <div class="absolute -bottom-2.5 left-1/2 -translate-x-1/2 bg-gov-darkgreen text-white text-[11px] font-bold px-3 py-0.5 rounded-md shadow border border-white whitespace-nowrap">
+                  বর্তমান ছবি
+                </div>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-4 text-center font-medium">প্রার্থীর ফ্রেশ পোর্ট্রেট ছবি</p>
+            </div>
+
+            <!-- Upload Controls & Options -->
+            <div class="flex-1 w-full space-y-4">
+              <!-- Upload from device / mobile -->
+              <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <label class="block text-xs font-bold text-slate-800 mb-1.5">
+                  <i class="fa-solid fa-cloud-arrow-up text-emerald-600 mr-1.5"></i>
+                  কম্পিউটার বা মোবাইল থেকে নতুন আসল ছবি আপলোড করুন
+                </label>
+                <p class="text-[11px] text-slate-500 mb-3">
+                  আপনার ডিভাইস থেকে প্রার্থীর যেকোনো পরিষ্কার ছবি (JPG/PNG/WEBP) নির্বাচন করুন। এটি স্বয়ংক্রিয়ভাবে অপ্টিমাইজ হয়ে হোমপেজে সেট হবে।
+                </p>
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <label class="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold px-4 py-2.5 rounded-xl cursor-pointer shadow-xs transition-all">
+                    <i class="fa-solid fa-image text-sm"></i>
+                    <span>নতুন ছবি ফাইল নির্বাচন</span>
+                    <input 
+                      type="file" 
+                      id="admin-cand-file-input" 
+                      accept="image/*" 
+                      class="hidden" 
+                      onchange="window.handleAdminCandidatePhotoUpload(event)" 
+                    />
+                  </label>
+                  <button 
+                    type="button" 
+                    onclick="window.resetAdminCandidatePhoto()" 
+                    class="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-rose-50 hover:text-rose-700 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-slate-300 hover:border-rose-300 transition-colors shadow-2xs"
+                    title="পূর্বনির্ধারিত মূল ছবিতে ফিরিয়ে নিন"
+                  >
+                    <i class="fa-solid fa-rotate-left text-xs"></i>
+                    <span>রিসেট (ডিফল্ট ছবি)</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Direct URL or Path Input -->
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                  <i class="fa-solid fa-link text-blue-600 mr-1"></i>
+                  অথবা ছবির অনলাইন লিঙ্ক (URL) বা ফাইল পাথ
+                </label>
+                <div class="flex gap-2">
+                  <input 
+                    type="text" 
+                    id="cand-photo-url-input" 
+                    value="${c.photo && c.photo.startsWith('data:') ? '(আপলোডকৃত নতুন ছবি)' : (c.photo || '/candidate_rajek_rezvi.jpg')}" 
+                    placeholder="https://example.com/photo.jpg বা /candidate_rajek_rezvi.jpg"
+                    class="flex-1 text-xs p-2.5 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 font-mono" 
+                  />
+                  <button 
+                    type="button" 
+                    onclick="window.applyAdminCandidatePhotoUrl()" 
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs shrink-0 transition-colors"
+                  >
+                    লিংক সেট করুন
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Candidate Profile Form -->
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
           <h4 class="font-extrabold text-slate-900 text-base mb-4 flex items-center gap-2 pb-3 border-b border-slate-100">
@@ -1456,6 +1689,11 @@
     portalData.candidate.orgDuty = document.getElementById('cand-org').value.trim();
     portalData.candidate.slogan = document.getElementById('cand-slogan').value.trim();
     portalData.candidate.quote = document.getElementById('cand-quote').value.trim();
+
+    const photoInput = document.getElementById('cand-photo-url-input');
+    if (photoInput && photoInput.value && photoInput.value !== '(আপলোডকৃত নতুন ছবি)') {
+      portalData.candidate.photo = photoInput.value.trim();
+    }
 
     saveConfig();
   };
